@@ -1,0 +1,12 @@
+image:
+  repository: servicing-ledger-demo
+  tag: local
+  pullPolicy: IfNotPresent
+
+service:
+  port: 8080
+worker:
+  pollSeconds: 2
+storage:
+  sizeLimit: 256Mi
+
