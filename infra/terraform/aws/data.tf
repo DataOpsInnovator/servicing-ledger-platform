@@ -105,10 +105,21 @@ resource "aws_s3_bucket_public_access_block" "audit" {
 resource "aws_s3_bucket_server_side_encryption_configuration" "audit" {
   bucket = aws_s3_bucket.audit.id
   rule {
-    apply_server_side_encryption_by_default { sse_algorithm = "AES256" }
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.audit.arn
+    }
+    bucket_key_enabled = true
   }
 }
 resource "aws_s3_bucket_policy" "audit" {
   bucket = aws_s3_bucket.audit.id
   policy = jsonencode({ Version = "2012-10-17", Statement = [{ Sid = "DenyInsecureTransport", Effect = "Deny", Principal = "*", Action = "s3:*", Resource = [aws_s3_bucket.audit.arn, "${aws_s3_bucket.audit.arn}/*"], Condition = { Bool = { "aws:SecureTransport" = "false" } } }] })
+}
+
+resource "aws_kms_key" "audit" {
+  description             = "Servicing ledger audit archive"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
+  lifecycle { prevent_destroy = true }
 }
