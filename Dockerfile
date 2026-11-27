@@ -1,5 +1,5 @@
 # Keep the build tooling outside the final image; use patched Alpine packages.
-FROM python:3.13.18-alpine3.24 AS base
+FROM python:3.15.2-alpine3.24 AS base
 RUN apk upgrade --no-cache
 FROM base AS builder
 WORKDIR /build
