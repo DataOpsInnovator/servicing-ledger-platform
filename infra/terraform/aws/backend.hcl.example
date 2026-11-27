@@ -3,3 +3,5 @@ key          = "servicing-ledger/staging/terraform.tfstate"
 region       = "us-east-1"
 encrypt      = true
 use_lockfile = true
+# Set to state_kms_key_arn from the state bootstrap output.
+kms_key_id   = "arn:aws:kms:us-east-1:123456789012:key/REPLACE"
