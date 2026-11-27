@@ -28,9 +28,11 @@ def publish_one(store, sqs, queue_url):
     # Keep one row locked across the bounded SDK call. A crash after send but before
     # commit is safe: retry sends a duplicate, which the consumer deduplicates.
     with store.transaction() as conn:
-        row = conn.execute('''SELECT * FROM outbox WHERE published_at IS NULL AND handled_at IS NULL
-            AND quarantined_at IS NULL ORDER BY created_at,event_id LIMIT 1'''
-            + (' FOR UPDATE SKIP LOCKED' if store.distributed else '')).fetchone()
+        query = ('''SELECT * FROM outbox WHERE published_at IS NULL AND handled_at IS NULL
+            AND quarantined_at IS NULL ORDER BY created_at,event_id LIMIT 1 FOR UPDATE SKIP LOCKED'''
+            if store.distributed else '''SELECT * FROM outbox WHERE published_at IS NULL AND handled_at IS NULL
+            AND quarantined_at IS NULL ORDER BY created_at,event_id LIMIT 1''')
+        row = conn.execute(query).fetchone()
         if not row:
             return False
         if not valid_event(row, row['payload_json']):
@@ -51,7 +53,9 @@ def consume_message(store, body):
     except (ValueError, TypeError, KeyError):
         return False
     with store.transaction() as conn:
-        row = conn.execute('SELECT * FROM outbox WHERE event_id=?' + (' FOR UPDATE' if store.distributed else ''), (event_id,)).fetchone()
+        query = ('SELECT * FROM outbox WHERE event_id=? FOR UPDATE' if store.distributed
+                 else 'SELECT * FROM outbox WHERE event_id=?')
+        row = conn.execute(query, (event_id,)).fetchone()
         if not row or row['quarantined_at'] or not valid_event(row, body):
             return False  # Let SQS redrive malformed/unrecognized messages to DLQ.
         now = utc_now()
