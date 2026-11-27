@@ -18,8 +18,11 @@ def handle_batch(store: LedgerStore, limit: int = 50) -> int:
         raise ValueError('batch limit must be 1–500')
     handled = 0
     with store.transaction() as conn:
-        rows = conn.execute('''SELECT * FROM outbox WHERE handled_at IS NULL
-            AND quarantined_at IS NULL ORDER BY created_at,event_id LIMIT ?''' + (' FOR UPDATE SKIP LOCKED' if store.distributed else ''), (limit,)).fetchall()
+        query = ('''SELECT * FROM outbox WHERE handled_at IS NULL
+            AND quarantined_at IS NULL ORDER BY created_at,event_id LIMIT ? FOR UPDATE SKIP LOCKED'''
+            if store.distributed else '''SELECT * FROM outbox WHERE handled_at IS NULL
+            AND quarantined_at IS NULL ORDER BY created_at,event_id LIMIT ?''')
+        rows = conn.execute(query, (limit,)).fetchall()
         for row in rows:
             now = utc_now()
             try:
