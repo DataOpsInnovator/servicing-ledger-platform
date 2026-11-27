@@ -1,0 +1,10 @@
+**/__pycache__
+.git
+.github
+.env
+.env.*
+work
+**/*.db*
+.venv
+.coverage
+htmlcov

@@ -1,0 +1,46 @@
+image:
+  repository: ""
+  digest: ""
+aws:
+  region: us-east-1
+  queueUrl: ""
+  auditBucket: ""
+  databaseSecrets:
+    api: ""
+    publisher: ""
+    consumer: ""
+    archive: ""
+    migrator: ""
+  caConfigMap: rds-ca
+identity:
+  issuer: ""
+  audience: ""
+  jwksUrl: ""
+api:
+  replicas: 2
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 65
+workers:
+  publisher: 2
+  consumer: 2
+migration:
+  enabled: true
+observability:
+  serviceMonitor: false
+  otlpEndpoint: ""
+# Supply an approved ingress class/controller and private TLS host.
+ingress:
+  enabled: false
+  className: ""
+  host: ""
+  tlsSecret: ""
+  annotations: {}
+# NetworkPolicy is ingress-only: egress must reach AWS APIs, RDS, OIDC and DNS.
+# Replace with your CNI's egress policy and validated VPC endpoints before production.
+networkPolicy:
+  enabled: true
+  ingressNamespace: ingress-nginx
+  monitoringNamespace: monitoring

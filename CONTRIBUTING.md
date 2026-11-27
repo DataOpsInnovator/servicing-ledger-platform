@@ -1,0 +1,3 @@
+# Contributing
+
+Use a feature branch, a small reviewable change, and synthetic fixtures. Run `python -m unittest discover -s tests -v` and `python scripts/smoke.py` before requesting review. Include the business invariant, migration compatibility, security impact, and rollback plan in the pull request. Database changes require a new numbered migration, legacy upgrade coverage, and a backup/restore procedure. Do not edit a released migration. Update docs and evidence when behavior changes. GitHub branch protection, required reviews and required status checks must be configured by the repository owner; they are not enforced by these files alone.

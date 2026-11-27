@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: servicing-ledger-staging
+  namespace: argocd
+spec:
+  project: servicing-ledger
+  source:
+    repoURL: https://github.com/REPLACE_OWNER/REPLACE_REPO.git
+    targetRevision: main
+    path: deploy/helm/ledger-cloud
+    helm:
+      valueFiles: [values.staging.yaml]
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ledger
+  syncPolicy:
+    # Manual sync after signature verification and environment approval. No unattended production prune.
+    syncOptions: [PruneLast=true, RespectIgnoreDifferences=true]

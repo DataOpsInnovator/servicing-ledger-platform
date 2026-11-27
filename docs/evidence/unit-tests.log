@@ -1,0 +1,28 @@
+test_append_only_audit (test_ledger.LedgerTests.test_append_only_audit) ... ok
+test_atomic_rollback (test_ledger.LedgerTests.test_atomic_rollback) ... {"event": "storage_failure", "request_id": "b355148936804796b7f2563ea94d8d0a", "error_type": "IntegrityError"}
+ok
+test_auth_and_roles (test_ledger.LedgerTests.test_auth_and_roles) ... ok
+test_body_boundary (test_ledger.LedgerTests.test_body_boundary) ... ok
+test_concurrent_same_key (test_ledger.LedgerTests.test_concurrent_same_key) ... ok
+test_conflict_preserves_original (test_ledger.LedgerTests.test_conflict_preserves_original) ... ok
+test_consumer_atomic_rollback (test_ledger.LedgerTests.test_consumer_atomic_rollback) ... ok
+test_consumer_replay (test_ledger.LedgerTests.test_consumer_replay) ... ok
+test_create_read_and_replay (test_ledger.LedgerTests.test_create_read_and_replay) ... ok
+test_distinct_keys_create_distinct_entries (test_ledger.LedgerTests.test_distinct_keys_create_distinct_entries) ... ok
+test_invalid_configuration_fails_startup (test_ledger.LedgerTests.test_invalid_configuration_fails_startup) ... ok
+test_invalid_payloads_and_key (test_ledger.LedgerTests.test_invalid_payloads_and_key) ... ok
+test_log_redaction (test_ledger.LedgerTests.test_log_redaction) ... ok
+test_missing_entry (test_ledger.LedgerTests.test_missing_entry) ... ok
+test_openapi_and_request_id (test_ledger.LedgerTests.test_openapi_and_request_id) ... ok
+test_quarantine_does_not_block_valid_event (test_ledger.LedgerTests.test_quarantine_does_not_block_valid_event) ... {"event": "outbox_quarantined", "event_id": "evt_9a0608dfb872461dbd6ea7762564fa72"}
+ok
+test_readiness_and_liveness (test_ledger.LedgerTests.test_readiness_and_liveness) ... ok
+test_reconciliation_detects_missing_receipt (test_ledger.LedgerTests.test_reconciliation_detects_missing_receipt) ... ok
+test_backup_restore (test_ledger.MigrationTests.test_backup_restore) ... ok
+test_future_schema_refused (test_ledger.MigrationTests.test_future_schema_refused) ... ok
+test_upgrade_legacy_schema_preserves_data (test_ledger.MigrationTests.test_upgrade_legacy_schema_preserves_data) ... ok
+
+----------------------------------------------------------------------
+Ran 21 tests in 0.682s
+
+OK

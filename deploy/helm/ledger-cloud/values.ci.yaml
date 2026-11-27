@@ -1,0 +1,16 @@
+image:
+  repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/servicing-ledger
+  digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+aws:
+  queueUrl: https://sqs.us-east-1.amazonaws.com/123456789012/ledger-events
+  auditBucket: ledger-synthetic-ci-audit
+  databaseSecrets:
+    api: arn:aws:secretsmanager:us-east-1:123456789012:secret:ledger/api-example
+    publisher: arn:aws:secretsmanager:us-east-1:123456789012:secret:ledger/publisher-example
+    consumer: arn:aws:secretsmanager:us-east-1:123456789012:secret:ledger/consumer-example
+    archive: arn:aws:secretsmanager:us-east-1:123456789012:secret:ledger/archive-example
+    migrator: arn:aws:secretsmanager:us-east-1:123456789012:secret:ledger/migrator-example
+identity:
+  issuer: https://identity.example.com/
+  audience: ledger-api
+  jwksUrl: https://identity.example.com/.well-known/jwks.json

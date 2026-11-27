@@ -1,0 +1,43 @@
+name: servicing-ledger-postgres
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ledger
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a disposable local PostgreSQL password}
+      POSTGRES_DB: ledger
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U ledger -d ledger']
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    volumes: [pg-data:/var/lib/postgresql/data]
+    ports: ['127.0.0.1:5432:5432']
+  api:
+    build: .
+    image: servicing-ledger:local
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp:size=32m,mode=1777]
+    environment:
+      DATABASE_URL: postgresql://ledger:${POSTGRES_PASSWORD:?Set local password}@db:5432/ledger
+      SERVICING_WRITER_TOKEN: ${SERVICING_WRITER_TOKEN:?Generate token}
+      SERVICING_OPERATOR_TOKEN: ${SERVICING_OPERATOR_TOKEN:?Generate token}
+    ports: ['127.0.0.1:8080:8080']
+    depends_on:
+      db: {condition: service_healthy}
+  worker:
+    image: servicing-ledger:local
+    command: [python, -m, app.outbox_worker]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp:size=32m,mode=1777]
+    environment:
+      DATABASE_URL: postgresql://ledger:${POSTGRES_PASSWORD:?Set local password}@db:5432/ledger
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck: {disable: true}
+volumes:
+  pg-data: {}

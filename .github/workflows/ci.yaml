@@ -1,0 +1,114 @@
+name: Ledger verification
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ['3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pip check
+      - run: python -m compileall -q app tests scripts
+      - run: python -m unittest discover -s tests -v
+      - run: python scripts/smoke.py
+      - run: python -m scripts.local_acceptance
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: disposable-ci-only
+          POSTGRES_DB: ledger
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ledger"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_POSTGRES_DSN: postgresql://postgres:disposable-ci-only@localhost:5432/ledger
+      PGPASSWORD: disposable-ci-only
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m unittest discover -s tests -p test_postgres.py -v
+      - name: PostgreSQL dump and restore rehearsal
+        run: |
+          pg_dump --version
+          pg_dump -h localhost -U postgres -Fc --no-owner --no-acl ledger > /tmp/ledger.dump
+          createdb -h localhost -U postgres ledger_restored
+          pg_restore -h localhost -U postgres --no-owner --no-acl --exit-on-error -d ledger_restored /tmp/ledger.dump
+          python -m scripts.verify_postgres_restore "$TEST_POSTGRES_DSN" "${TEST_POSTGRES_DSN%/ledger}/ledger_restored"
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install pip-audit==2.9.0 bandit==1.8.6
+      - run: pip-audit -r requirements.txt
+      - run: bandit -r app -ll -ii
+  deployment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.12.2'
+      - name: Validate Terraform without accessing AWS
+        run: |
+          for directory in infra/terraform/state infra/terraform/aws; do
+            terraform -chdir="$directory" init -backend=false
+            terraform -chdir="$directory" validate
+          done
+      - name: Validate Helm
+        run: |
+          helm lint deploy/helm/servicing-ledger --set auth.existingSecret=ledger-auth
+          helm template ledger deploy/helm/servicing-ledger --set auth.existingSecret=ledger-auth > /tmp/ledger-local.yaml
+          helm lint deploy/helm/ledger-cloud -f deploy/helm/ledger-cloud/values.ci.yaml
+          helm template ledger deploy/helm/ledger-cloud -n ledger -f deploy/helm/ledger-cloud/values.ci.yaml > /tmp/ledger-cloud.yaml
+      - name: Scan Terraform configuration
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra/terraform
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+      - name: Build image
+        run: docker build -t servicing-ledger:ci .
+      - name: Scan image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: servicing-ledger:ci
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+      - name: Validate Compose
+        env:
+          SERVICING_WRITER_TOKEN: ci-placeholder-writer-not-used-at-runtime
+          SERVICING_OPERATOR_TOKEN: ci-placeholder-operator-not-used-at-runtime
+          POSTGRES_PASSWORD: disposable-ci-only
+        run: |
+          docker compose config --quiet
+          docker compose -f compose.postgres.yaml config --quiet

@@ -1,274 +1,262 @@
-"""Synthetic servicing-entry API. No real payment or servicing integration."""
-
-from __future__ import annotations
-
-import hashlib
+"""Authenticated synthetic servicing API; run with python -m app.servicing_api."""
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 import json
+import logging
 import os
 import re
-import sqlite3
+import time
 import uuid
-from datetime import date, datetime, timezone
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
-from typing import Any
-from urllib.parse import unquote, urlparse
+from typing import Annotated
 
+from fastapi import Depends, FastAPI, Header, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from starlette.exceptions import HTTPException
 
-DB_PATH = Path(os.environ.get("SERVICING_DB_PATH", "./work/servicing.db"))
-HOST = os.environ.get("SERVICING_HOST", "0.0.0.0")
-PORT = int(os.environ.get("SERVICING_PORT", "8080"))
+from app.config import Settings
+from app.domain import EntryRequest, EntryResponse, ErrorResponse, ReversalRequest
+from app.storage import IdempotencyConflict, ReversalConflict, make_store, storage_errors
+from app.auth import Authenticator, InvalidToken, Principal
+from app.telemetry import Telemetry, configure_tracing
+
 MAX_BODY_BYTES = 16_384
-LOAN_REF_RE = re.compile(r"^SYN-[A-Z0-9-]{4,40}$")
-IDEMPOTENCY_RE = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
+LOGGER = logging.getLogger('servicing.api')
+BEARER = HTTPBearer(auto_error=False)
 
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+class RequestBoundary:
+    """Bound request bodies even without Content-Length and emit safe correlation logs."""
+    def __init__(self, app, telemetry):
+        self.app = app
+        self.telemetry = telemetry
 
-
-def connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=10, isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 10000")
-    return conn
-
-
-def initialize_db() -> None:
-    with connect() as conn:
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS servicing_entries (
-                entry_id TEXT PRIMARY KEY,
-                idempotency_key TEXT NOT NULL UNIQUE,
-                request_hash TEXT NOT NULL,
-                loan_ref TEXT NOT NULL,
-                amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
-                currency TEXT NOT NULL CHECK (currency = 'USD'),
-                effective_date TEXT NOT NULL,
-                state TEXT NOT NULL CHECK (state IN ('RECORDED')),
-                version INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS audit_events (
-                audit_id TEXT PRIMARY KEY,
-                entry_id TEXT NOT NULL REFERENCES servicing_entries(entry_id),
-                event_type TEXT NOT NULL,
-                occurred_at TEXT NOT NULL,
-                payload_json TEXT NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS outbox (
-                event_id TEXT PRIMARY KEY,
-                entry_id TEXT NOT NULL REFERENCES servicing_entries(entry_id),
-                event_type TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                handled_at TEXT
-            );
-            CREATE INDEX IF NOT EXISTS outbox_pending_idx
-                ON outbox(handled_at, created_at);
-            CREATE TABLE IF NOT EXISTS consumer_receipts (
-                consumer_name TEXT NOT NULL,
-                event_id TEXT NOT NULL,
-                received_at TEXT NOT NULL,
-                PRIMARY KEY (consumer_name, event_id)
-            );
-            """
-        )
-
-
-def normalize_request(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError("body must be a JSON object")
-    loan_ref = value.get("loan_ref")
-    amount_cents = value.get("amount_cents")
-    currency = value.get("currency")
-    effective_date = value.get("effective_date")
-    if not isinstance(loan_ref, str) or not LOAN_REF_RE.fullmatch(loan_ref):
-        raise ValueError("loan_ref must use a synthetic SYN- prefix and valid characters")
-    if isinstance(amount_cents, bool) or not isinstance(amount_cents, int) or amount_cents <= 0:
-        raise ValueError("amount_cents must be a positive integer")
-    if amount_cents > 100_000_000:
-        raise ValueError("amount_cents exceeds the simulator limit")
-    if currency != "USD":
-        raise ValueError("currency must be USD in this synthetic demo")
-    if not isinstance(effective_date, str):
-        raise ValueError("effective_date must be an ISO date")
-    try:
-        date.fromisoformat(effective_date)
-    except ValueError as exc:
-        raise ValueError("effective_date must be an ISO date") from exc
-    return {
-        "loan_ref": loan_ref,
-        "amount_cents": amount_cents,
-        "currency": currency,
-        "effective_date": effective_date,
-    }
-
-
-def request_digest(payload: dict[str, Any]) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def entry_dict(row: sqlite3.Row, *, replayed: bool = False) -> dict[str, Any]:
-    return {
-        "entry_id": row["entry_id"],
-        "loan_ref": row["loan_ref"],
-        "amount_cents": row["amount_cents"],
-        "currency": row["currency"],
-        "effective_date": row["effective_date"],
-        "state": row["state"],
-        "version": row["version"],
-        "created_at": row["created_at"],
-        "idempotency_replayed": replayed,
-    }
-
-
-class Handler(BaseHTTPRequestHandler):
-    server_version = "ServicingLedgerDemo/0.1"
-
-    def log_message(self, fmt: str, *args: Any) -> None:
-        # Keep request bodies, loan references, and idempotency keys out of logs.
-        super().log_message(fmt, *args)
-
-    def send_json(self, status: int, value: dict[str, Any], headers: dict[str, str] | None = None) -> None:
-        raw = json.dumps(value, separators=(",", ":")).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(raw)))
-        self.send_header("Cache-Control", "no-store")
-        for key, val in (headers or {}).items():
-            self.send_header(key, val)
-        self.end_headers()
-        self.wfile.write(raw)
-
-    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-        path = urlparse(self.path).path
-        if path == "/healthz":
-            self.send_json(200, {"status": "ok"})
+    async def __call__(self, scope, receive, send):
+        if scope['type'] != 'http':
+            await self.app(scope, receive, send)
             return
-        if path == "/readyz":
-            try:
-                with connect() as conn:
-                    conn.execute("SELECT 1").fetchone()
-                self.send_json(200, {"status": "ready"})
-            except sqlite3.Error:
-                self.send_json(503, {"status": "not_ready"})
-            return
-        prefix = "/v1/servicing-entries/"
-        if path.startswith(prefix):
-            entry_id = unquote(path[len(prefix):])
-            with connect() as conn:
-                row = conn.execute(
-                    "SELECT * FROM servicing_entries WHERE entry_id = ?", (entry_id,)
-                ).fetchone()
-            if row is None:
-                self.send_json(404, {"error": "NOT_FOUND"})
-            else:
-                self.send_json(200, entry_dict(row))
-            return
-        self.send_json(404, {"error": "NOT_FOUND"})
-
-    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-        if urlparse(self.path).path != "/v1/servicing-entries":
-            self.send_json(404, {"error": "NOT_FOUND"})
-            return
-        idem_key = self.headers.get("Idempotency-Key", "")
-        if not IDEMPOTENCY_RE.fullmatch(idem_key):
-            self.send_json(400, {"error": "INVALID_IDEMPOTENCY_KEY"})
-            return
+        request_id = uuid.uuid4().hex
+        scope.setdefault('state', {})['request_id'] = request_id
+        started = time.monotonic()
+        status = 500
+        async def send_with_id(message):
+            nonlocal status
+            if message['type'] == 'http.response.start':
+                status = message['status']
+                message['headers'] = list(message.get('headers', [])) + [
+                    (b'x-request-id', request_id.encode()), (b'cache-control', b'no-store'),
+                    (b'x-content-type-options', b'nosniff')]
+            await send(message)
+        async def reject(code, error):
+            await JSONResponse({'error': error, 'request_id': request_id}, status_code=code)(
+                scope, receive, send_with_id)
+        span = self.telemetry.tracer.start_span("ledger.http")
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            self.send_json(400, {"error": "INVALID_CONTENT_LENGTH"})
-            return
-        if length < 1 or length > MAX_BODY_BYTES:
-            self.send_json(413 if length > MAX_BODY_BYTES else 400, {"error": "INVALID_BODY_SIZE"})
-            return
-        try:
-            body = json.loads(self.rfile.read(length))
-            payload = normalize_request(body)
-        except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
-            self.send_json(400, {"error": "INVALID_REQUEST", "detail": str(exc)})
-            return
-
-        digest = request_digest(payload)
-        now = utc_now()
-        entry_id = "se_" + uuid.uuid4().hex
-        event_id = "evt_" + uuid.uuid4().hex
-        event = {
-            "event_id": event_id,
-            "event_type": "servicing.entry.recorded.v1",
-            "entry_id": entry_id,
-            "loan_ref": payload["loan_ref"],
-            "amount_cents": payload["amount_cents"],
-            "currency": payload["currency"],
-            "effective_date": payload["effective_date"],
-            "occurred_at": now,
-        }
-
-        try:
-            with connect() as conn:
-                conn.execute("BEGIN IMMEDIATE")
-                existing = conn.execute(
-                    "SELECT * FROM servicing_entries WHERE idempotency_key = ?", (idem_key,)
-                ).fetchone()
-                if existing is not None:
-                    conn.rollback()
-                    if existing["request_hash"] != digest:
-                        self.send_json(409, {"error": "IDEMPOTENCY_CONFLICT"})
-                    else:
-                        self.send_json(200, entry_dict(existing, replayed=True), {
-                            "Idempotency-Replayed": "true"
-                        })
+            if scope['method'] == 'POST':
+                headers = dict(scope['headers'])
+                content_type = headers.get(b'content-type', b'').split(b';')[0].strip().lower()
+                if content_type != b'application/json':
+                    await reject(415, 'UNSUPPORTED_MEDIA_TYPE')
                     return
-
-                conn.execute(
-                    """INSERT INTO servicing_entries
-                    (entry_id, idempotency_key, request_hash, loan_ref, amount_cents,
-                     currency, effective_date, state, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'RECORDED', ?)""",
-                    (entry_id, idem_key, digest, payload["loan_ref"], payload["amount_cents"],
-                     payload["currency"], payload["effective_date"], now),
-                )
-                conn.execute(
-                    "INSERT INTO audit_events VALUES (?, ?, ?, ?, ?)",
-                    ("aud_" + uuid.uuid4().hex, entry_id, "servicing.entry.recorded",
-                     now, json.dumps(event, sort_keys=True, separators=(",", ":"))),
-                )
-                conn.execute(
-                    "INSERT INTO outbox VALUES (?, ?, ?, ?, ?, NULL)",
-                    (event_id, entry_id, event["event_type"],
-                     json.dumps(event, sort_keys=True, separators=(",", ":")), now),
-                )
-                conn.commit()
-        except sqlite3.Error:
-            self.send_json(503, {"error": "TEMPORARY_STORAGE_FAILURE"})
-            return
-
-        with connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM servicing_entries WHERE entry_id = ?", (entry_id,)
-            ).fetchone()
-        self.send_json(201, entry_dict(row), {"Location": f"/v1/servicing-entries/{entry_id}"})
-
-
-def main() -> None:
-    initialize_db()
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
-    print(f"servicing-ledger demo listening on {HOST}:{PORT}; database={DB_PATH}")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
+                body = bytearray()
+                while True:
+                    message = await receive()
+                    if message['type'] == 'http.disconnect':
+                        return
+                    chunk = message.get('body', b'')
+                    if len(body) + len(chunk) > MAX_BODY_BYTES:
+                        await reject(413, 'BODY_TOO_LARGE')
+                        return
+                    body.extend(chunk)
+                    if not message.get('more_body', False):
+                        break
+                delivered = False
+                async def bounded_receive():
+                    nonlocal delivered
+                    if delivered:
+                        return await receive()
+                    delivered = True
+                    return {'type': 'http.request', 'body': bytes(body), 'more_body': False}
+                await self.app(scope, bounded_receive, send_with_id)
+            else:
+                await self.app(scope, receive, send_with_id)
+        finally:
+            route = scope.get('route')
+            span.set_attribute('http.route', getattr(route, 'path', 'unmatched'))
+            span.set_attribute('http.response.status_code', status)
+            span.end()
+            self.telemetry.observe(scope['method'] if scope['method'] in ('GET','POST','HEAD') else 'OTHER', getattr(route, 'path', 'unmatched'), status, time.monotonic()-started)
+            LOGGER.info(json.dumps({'event': 'http_request', 'request_id': request_id,
+                'route': getattr(route, 'path', 'unmatched'), 'method': scope['method'],
+                'status': status, 'duration_ms': round((time.monotonic()-started)*1000, 2)}))
 
 
-if __name__ == "__main__":
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or Settings.from_env()
+    store = make_store(settings)
+    telemetry = Telemetry()
+    authenticator = Authenticator(settings)
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        settings.validate()
+        if settings.auto_migrate:
+            store.migrate()
+        if not store.ready():
+            raise RuntimeError("Database schema is not ready; run migrations first")
+        provider = configure_tracing()
+        try:
+            yield
+        finally:
+            if provider:
+                provider.shutdown()
+
+    api = FastAPI(title='Servicing Ledger API', version='2.0.0', lifespan=lifespan,
+                  description='Synthetic-only servicing entry recording. No funds movement.')
+    api.add_middleware(RequestBoundary, telemetry=telemetry)
+
+    def authenticate(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(BEARER)]):
+        try:
+            return authenticator.authenticate(credentials.credentials if credentials else '')
+        except InvalidToken:
+            raise HTTPException(401, 'UNAUTHORIZED', headers={'WWW-Authenticate': 'Bearer'}) from None
+
+    def require_writer(principal: Annotated[Principal, Depends(authenticate)]):
+        if 'writer' not in principal.roles:
+            raise HTTPException(403, 'FORBIDDEN')
+        return principal
+
+    def require_operator(principal: Annotated[Principal, Depends(authenticate)]):
+        if 'operator' not in principal.roles:
+            raise HTTPException(403, 'FORBIDDEN')
+        return principal
+
+    def require_reader(principal: Annotated[Principal, Depends(authenticate)]):
+        if not principal.roles:
+            raise HTTPException(403, 'FORBIDDEN')
+        return principal
+
+    def error(request, status, code, headers=None):
+        return JSONResponse({'error': code, 'request_id': request.state.request_id},
+                            status_code=status, headers=headers)
+
+    @api.exception_handler(HTTPException)
+    async def http_error(request, exc):
+        return error(request, exc.status_code, exc.detail if isinstance(exc.detail, str)
+                     else 'HTTP_ERROR', exc.headers)
+
+    @api.exception_handler(RequestValidationError)
+    async def validation_error(request, _exc):
+        return error(request, 400, 'INVALID_REQUEST')
+
+    async def storage_error(request, exc):
+        LOGGER.error(json.dumps({'event': 'storage_failure', 'request_id': request.state.request_id,
+                                 'error_type': type(exc).__name__}))
+        return error(request, 503, 'TEMPORARY_STORAGE_FAILURE', {'Retry-After': '2'})
+
+    for error_class in storage_errors():
+        api.add_exception_handler(error_class, storage_error)
+
+    @api.get('/healthz', tags=['health'])
+    def health():
+        return {'status': 'ok'}
+
+    @api.get('/readyz', tags=['health'])
+    def ready(response: Response):
+        try:
+            if store.ready():
+                return {'status': 'ready'}
+        except storage_errors():
+            pass
+        response.status_code = 503
+        return {'status': 'not_ready'}
+
+    @api.post('/v1/servicing-entries', status_code=201, response_model=EntryResponse,
+              dependencies=[Depends(require_writer)], tags=['entries'],
+              responses={code: {'model': ErrorResponse} for code in (400, 401, 403, 409, 413, 415, 503)}
+              | {200: {'model': EntryResponse, 'description': 'Idempotent replay'}})
+    def create_entry(payload: EntryRequest, response: Response, principal: Annotated[Principal, Depends(require_writer)],
+                     idempotency_key: Annotated[str | None, Header(alias='Idempotency-Key')] = None):
+        if not idempotency_key or not re.fullmatch(r'[A-Za-z0-9._:-]{8,128}', idempotency_key):
+            raise HTTPException(400, 'INVALID_IDEMPOTENCY_KEY')
+        try:
+            entry, created = store.record(idempotency_key, payload.model_dump(), principal.actor)
+        except IdempotencyConflict:
+            raise HTTPException(409, 'IDEMPOTENCY_CONFLICT') from None
+        if created:
+            response.headers['Location'] = '/v1/servicing-entries/' + entry['entry_id']
+        else:
+            response.status_code = 200
+            response.headers['Idempotency-Replayed'] = 'true'
+        return entry
+
+    @api.get('/v1/servicing-entries/{entry_id}', response_model=EntryResponse,
+             dependencies=[Depends(require_reader)], tags=['entries'])
+    def get_entry(entry_id: str):
+        entry = store.get(entry_id) if re.fullmatch(r'se_[a-f0-9]{32}', entry_id) else None
+        if entry is None:
+            raise HTTPException(404, 'NOT_FOUND')
+        return entry
+
+    @api.get('/v1/operations/reconciliation', dependencies=[Depends(require_operator)], tags=['operations'])
+    def reconciliation():
+        return store.reconciliation()
+
+    @api.post('/v1/servicing-entries/{entry_id}/reversal', status_code=201, response_model=EntryResponse, tags=['entries'])
+    def reverse(entry_id: str, payload: ReversalRequest, response: Response,
+                principal: Annotated[Principal, Depends(require_operator)],
+                idempotency_key: Annotated[str | None, Header(alias='Idempotency-Key')] = None):
+        if not idempotency_key or not re.fullmatch(r'[A-Za-z0-9._:-]{8,128}', idempotency_key):
+            raise HTTPException(400, 'INVALID_IDEMPOTENCY_KEY')
+        if not re.fullmatch(r'se_[a-f0-9]{32}', entry_id):
+            raise HTTPException(404, 'NOT_FOUND')
+        try:
+            entry, created = store.record(idempotency_key, payload.model_dump(), principal.actor, entry_id)
+        except IdempotencyConflict:
+            raise HTTPException(409, 'IDEMPOTENCY_CONFLICT') from None
+        except ReversalConflict:
+            raise HTTPException(409, 'REVERSAL_NOT_ALLOWED') from None
+        if not created:
+            response.status_code = 200
+            response.headers['Idempotency-Replayed'] = 'true'
+        else:
+            response.headers['Location'] = '/v1/servicing-entries/' + entry['entry_id']
+        return entry
+
+    @api.get('/v1/loans/{loan_ref}/reconciliation', dependencies=[Depends(require_operator)], tags=['operations'])
+    def loan_reconciliation(loan_ref: str):
+        if not re.fullmatch(r'SYN-[A-Z0-9-]{4,40}', loan_ref):
+            raise HTTPException(400, 'INVALID_LOAN_REFERENCE')
+        return store.balances(loan_ref)
+
+    @api.get('/metrics', include_in_schema=False)
+    def metrics():
+        try:
+            report = store.reconciliation()
+            for key in ('pending','quarantined','awaiting_consumer','unarchived_audit_events','entry_integrity_errors','missing_receipts','unexpected_receipts'):
+                telemetry.backlog.labels(key).set(report[key])
+            oldest = report['oldest_pending_at']
+            telemetry.pending_age.set(max(0,(datetime.now(timezone.utc)-datetime.fromisoformat(oldest)).total_seconds()) if oldest else 0)
+            telemetry.scrape_ok.set(1)
+        except storage_errors():
+            telemetry.scrape_ok.set(0)
+        body, content_type = telemetry.render()
+        return Response(content=body, headers={'Content-Type': content_type})
+
+    return api
+
+
+app = create_app()
+
+
+def main():
+    import uvicorn
+    logging.basicConfig(level=logging.INFO, format='%(message)s')
+    uvicorn.run(app, host=os.getenv('SERVICING_HOST', '127.0.0.1'),
+                port=int(os.getenv('SERVICING_PORT', '8080')), access_log=False,
+                server_header=False, limit_concurrency=100, timeout_keep_alive=5)
+
+
+if __name__ == '__main__':
     main()
-

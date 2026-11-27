@@ -1,0 +1,16 @@
+PARSED: .github/dependabot.yml
+PARSED: .github/workflows/ci.yaml
+PARSED: .github/workflows/release.yaml
+PARSED: compose.postgres.yaml
+PARSED: compose.yaml
+PARSED: deploy/gitops/application.yaml.example
+PARSED: deploy/gitops/project.yaml.example
+PARSED: deploy/helm/ledger-cloud/Chart.yaml
+PARSED: deploy/helm/ledger-cloud/values.ci.yaml
+PARSED: deploy/helm/ledger-cloud/values.yaml
+PARSED: deploy/helm/servicing-ledger/Chart.yaml
+PARSED: deploy/helm/servicing-ledger/values.yaml
+PARSED: deploy/observability/otel-collector.yaml.example
+PARSED: deploy/observability/prometheus-rules.yaml
+PARSED: Grafana dashboard JSON
+PASS: static parse only; no Helm rendering, Terraform provider validation or Kubernetes API validation.

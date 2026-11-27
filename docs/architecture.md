@@ -1,5 +1,10 @@
 # Architecture and business case
 
+> **Historical v1.0 reference.** Preserved for design and portfolio context. For current implementation, see [v2 architecture](architecture-v2.md) and the root README. Statements about unimplemented PostgreSQL/SQS/reversals or old test counts describe v1 only.
+
+
+> Reference design / original planning material. For current implemented behavior and verified evidence, see the root README and `docs/evidence/README.md`. Cloud deployment, compliance, performance and availability remain unverified.
+
 ## Executive assessment and selected project
 
 **Servicing Ledger Platform** is an independent, synthetic loan-servicing transaction-recording platform. It accepts a servicing entry, persists a unique operation and audit record atomically, and publishes a versioned event through an outbox to an idempotent consumer.

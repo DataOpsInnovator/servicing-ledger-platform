@@ -1,7 +1,7 @@
 apiVersion: v2
 name: servicing-ledger
-description: Disposable synthetic servicing-entry demo; not production storage
+description: Single-instance synthetic servicing service; not HA
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 2.0.0
+appVersion: "2.0.0"
 
