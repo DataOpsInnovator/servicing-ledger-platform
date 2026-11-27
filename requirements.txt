@@ -32,7 +32,7 @@ pycparser==3.0
 opentelemetry-semantic-conventions==0.66b2
 opentelemetry-exporter-otlp-proto-common==1.45.2
 opentelemetry-proto==1.45.2
-protobuf==6.33.6
+protobuf==7.36.2
 googleapis-common-protos==1.75.0
 requests==2.34.2
 charset-normalizer==3.4.7
