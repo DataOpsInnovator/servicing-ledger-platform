@@ -51,11 +51,14 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m unittest discover -s tests -p test_postgres.py -v
       - name: PostgreSQL dump and restore rehearsal
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          pg_dump --version
-          pg_dump -h localhost -U postgres -Fc --no-owner --no-acl ledger > /tmp/ledger.dump
-          createdb -h localhost -U postgres ledger_restored
-          pg_restore -h localhost -U postgres --no-owner --no-acl --exit-on-error -d ledger_restored /tmp/ledger.dump
+          # Use the same PostgreSQL major version for server, dump and restore.
+          docker exec "$POSTGRES_CONTAINER" pg_dump --version
+          docker exec "$POSTGRES_CONTAINER" pg_dump -U postgres -Fc --no-owner --no-acl ledger > /tmp/ledger.dump
+          docker exec "$POSTGRES_CONTAINER" createdb -U postgres ledger_restored
+          docker exec -i "$POSTGRES_CONTAINER" pg_restore -U postgres --no-owner --no-acl --exit-on-error -d ledger_restored < /tmp/ledger.dump
           python -m scripts.verify_postgres_restore "$TEST_POSTGRES_DSN" "${TEST_POSTGRES_DSN%/ledger}/ledger_restored"
   security:
     runs-on: ubuntu-latest
