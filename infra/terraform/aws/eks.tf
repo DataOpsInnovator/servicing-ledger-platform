@@ -20,6 +20,10 @@ resource "aws_eks_cluster" "main" {
     endpoint_public_access  = length(var.public_api_cidrs) > 0
     public_access_cidrs     = length(var.public_api_cidrs) > 0 ? var.public_api_cidrs : null
   }
+  encryption_config {
+    resources = ["secrets"]
+    provider { key_arn = aws_kms_key.eks.arn }
+  }
   access_config {
     authentication_mode                         = "API"
     bootstrap_cluster_creator_admin_permissions = false
@@ -92,4 +96,10 @@ resource "aws_eks_addon" "core" {
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "PRESERVE"
   depends_on                  = [aws_eks_node_group.main]
+}
+
+resource "aws_kms_key" "eks" {
+  description             = "EKS Kubernetes secrets"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
 }
