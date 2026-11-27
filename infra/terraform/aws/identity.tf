@@ -16,7 +16,10 @@ resource "aws_iam_role_policy" "workload" {
     [{ Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = aws_secretsmanager_secret.database[each.key].arn }],
     each.key == "publisher" ? [{ Effect = "Allow", Action = ["sqs:SendMessage"], Resource = aws_sqs_queue.events.arn }] : [],
     each.key == "consumer" ? [{ Effect = "Allow", Action = ["sqs:ReceiveMessage", "sqs:DeleteMessage"], Resource = aws_sqs_queue.events.arn }] : [],
-    each.key == "archive" ? [{ Effect = "Allow", Action = ["s3:PutObject", "s3:GetObject"], Resource = "${aws_s3_bucket.audit.arn}/audit/v1/*" }] : []
+    each.key == "archive" ? [
+      { Effect = "Allow", Action = ["s3:PutObject", "s3:GetObject"], Resource = "${aws_s3_bucket.audit.arn}/audit/v1/*" },
+      { Effect = "Allow", Action = ["kms:GenerateDataKey", "kms:Decrypt"], Resource = aws_kms_key.audit.arn }
+    ] : []
   ) })
 }
 resource "aws_eks_pod_identity_association" "workload" {
