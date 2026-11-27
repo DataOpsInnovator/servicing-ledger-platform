@@ -25,13 +25,14 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: api
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["python", "/app/app/servicing_api.py"]
+          command: ["python", "-m", "app.servicing_api"]
           ports:
             - name: http
               containerPort: 8080
@@ -39,6 +40,16 @@ spec:
           env:
             - name: SERVICING_DB_PATH
               value: /data/servicing.db
+            - name: SERVICING_WRITER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "auth.existingSecret is required" .Values.auth.existingSecret | quote }}
+                  key: writer-token
+            - name: SERVICING_OPERATOR_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "auth.existingSecret is required" .Values.auth.existingSecret | quote }}
+                  key: operator-token
             - name: SERVICING_PORT
               value: "8080"
           startupProbe:
@@ -77,7 +88,7 @@ spec:
         - name: local-outbox-worker
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["python", "/app/app/outbox_worker.py", "--poll-seconds", "{{ .Values.worker.pollSeconds }}"]
+          command: ["python", "-m", "app.outbox_worker", "--poll-seconds", "{{ .Values.worker.pollSeconds }}"]
           env:
             - name: SERVICING_DB_PATH
               value: /data/servicing.db
@@ -100,8 +111,13 @@ spec:
               mountPath: /tmp
       volumes:
         - name: demo-data
+          {{- if .Values.storage.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.storage.existingClaim | quote }}
+          {{- else }}
           emptyDir:
             sizeLimit: {{ .Values.storage.sizeLimit }}
+          {{- end }}
         - name: tmp
           emptyDir:
             sizeLimit: 32Mi

@@ -1,0 +1,38 @@
+name: servicing-ledger
+x-runtime: &runtime
+  build: .
+  image: servicing-ledger:local
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  init: true
+  restart: unless-stopped
+  volumes:
+    - ledger-data:/data
+  tmpfs:
+    - /tmp:size=32m,mode=1777
+  environment:
+    SERVICING_DB_PATH: /data/servicing.db
+services:
+  api:
+    <<: *runtime
+    environment:
+      SERVICING_DB_PATH: /data/servicing.db
+      SERVICING_WRITER_TOKEN: ${SERVICING_WRITER_TOKEN:?Generate a writer token in .env}
+      SERVICING_OPERATOR_TOKEN: ${SERVICING_OPERATOR_TOKEN:?Generate an operator token in .env}
+    ports:
+      - "127.0.0.1:8080:8080"
+    mem_limit: 256m
+    cpus: 0.5
+  worker:
+    <<: *runtime
+    command: [python, -m, app.outbox_worker]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    mem_limit: 128m
+    cpus: 0.25
+volumes:
+  ledger-data:

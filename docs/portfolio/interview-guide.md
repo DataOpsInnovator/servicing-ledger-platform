@@ -1,5 +1,10 @@
 # Portfolio presentation and interview preparation
 
+> **Historical v1.0 reference.** Preserved for design and portfolio context. For current implementation, see [v2 architecture](../architecture-v2.md) and the root README. Statements about unimplemented PostgreSQL/SQS/reversals or old test counts describe v1 only.
+
+
+> Reference design / original planning material. For current implemented behavior and verified evidence, see the root README and `docs/evidence/README.md`. Cloud deployment, compliance, performance and availability remain unverified.
+
 ## GitHub repository presentation
 
 **Repository name:** `servicing-ledger-platform`  

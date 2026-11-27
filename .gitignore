@@ -9,3 +9,23 @@ __pycache__/
 crash.log
 .env
 
+.venv/
+work/
+.env.*
+!.env.example
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Terraform state, provider cache, deployment-specific configuration
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.auto.tfvars.json
+backend.hcl
+*.pem
+*.dump
+.env.*
+!.env.example

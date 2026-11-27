@@ -1,0 +1,73 @@
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ledger-migrate
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/sync-wave: "-1"
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: ledger-migrator
+      automountServiceAccountToken: false
+      securityContext:
+        {{- include "ledger.podSecurity" . | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "ledger.image" . | quote }}
+          command: ["python", "-m", "app.admin", "migrate", "--grant-cloud-roles"]
+          env:
+            {{- include "ledger.env" (dict "root" . "role" "migrator") | nindent 12 }}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          securityContext:
+            {{- include "ledger.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            {{- include "ledger.mounts" . | nindent 12 }}
+      volumes:
+        {{- include "ledger.volumes" . | nindent 8 }}
+---
+{{- end }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ledger-audit-archive
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 240
+      template:
+        metadata:
+          labels: {app: ledger-archive}
+        spec:
+          restartPolicy: Never
+          serviceAccountName: ledger-archive
+          automountServiceAccountToken: false
+          securityContext:
+            {{- include "ledger.podSecurity" . | nindent 12 }}
+          containers:
+            - name: archive
+              image: {{ include "ledger.image" . | quote }}
+              command: ["python", "-m", "app.audit_archive", "--limit", "1000"]
+              env:
+                {{- include "ledger.env" (dict "root" . "role" "archive") | nindent 16 }}
+              resources:
+                requests: {cpu: 100m, memory: 128Mi}
+                limits: {cpu: "1", memory: 512Mi}
+              securityContext:
+                {{- include "ledger.containerSecurity" . | nindent 16 }}
+              volumeMounts:
+                {{- include "ledger.mounts" . | nindent 16 }}
+          volumes:
+            {{- include "ledger.volumes" . | nindent 12 }}

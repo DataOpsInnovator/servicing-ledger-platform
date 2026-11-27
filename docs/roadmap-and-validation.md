@@ -1,5 +1,8 @@
 # Implementation roadmap, validation, and demonstration
 
+> **Historical v1.0 reference.** Preserved for design and portfolio context. For current implementation, see [v2 architecture](architecture-v2.md) and the root README. Statements about unimplemented PostgreSQL/SQS/reversals or old test counts describe v1 only.
+
+
 ## Implementation tiers
 
 | Tier | Scope | Deployment posture |
@@ -31,7 +34,7 @@ Indicative total is about 5–9 focused weeks, depending on how much of the adva
 
 ## Validation strategy and acceptance criteria
 
-The following are acceptance criteria to implement and execute. They are **planned**; this starter does not include automated test files or recorded test runs. Keep a result ledger with commit, command, environment, timestamp, outcome, and artifact link. Never change a row to “passed” without evidence.
+The following table is the original target acceptance plan. For executed local criteria, see [validation evidence](evidence/README.md); distributed/cloud variants remain planned. Keep a result ledger with commit, command, environment, timestamp, outcome, and artifact link. Never change a row to “passed” without evidence.
 
 | Area / acceptance criterion | Test or check to add | Expected result | Evidence | Status |
 |---|---|---|---|---|
@@ -59,7 +62,7 @@ Test categories as the project grows: Terraform format/validation and policy tes
 
 ### Preconditions
 
-- Python 3.12+, PowerShell, a clean checkout, and no production credentials.
+- Python 3.12 or 3.13, installed requirements, two locally generated role tokens, a clean checkout, and no production credentials.
 - Use a new disposable database path under `work/`; never point to real servicing data.
 - For the cloud extension only: approved account/region, reviewed current Pricing Calculator estimate, budget notification, bounded node count, and confirmed teardown operator. This repository does not provision it yet.
 
@@ -72,7 +75,7 @@ Test categories as the project grows: Terraform format/validation and policy tes
 5. **(1 min) Show event processing.** Run worker with `--once` or keep it running. Expected: one local receipt; explain the shared SQLite transaction is a simulator and the AWS queue delivery remains at least once.
 6. **(1 min) Explain recovery and observability.** Show the planned SLO/DR objectives and label them unmeasured; point out how queue age and reconciliation expose business delay.
 7. **(1 min) Explain security and cost.** Show data classes, human approval gates, and cleanup inventory. Do not expose account details or credentials.
-8. **(2 min) Close on evidence gaps.** State that EKS, Terraform, SQS, CI/CD, alarms, restore tests, and performance results are planned/reference-only until evidenced.
+8. **(2 min) Close on evidence gaps.** State that EKS, Terraform, SQS, remote CI execution, cloud alarms, cloud restore and performance results are planned/reference-only until evidenced. Local tests and smoke evidence are recorded separately.
 
 ### Local commands and cleanup
 

@@ -1,0 +1,16 @@
+{"event": "outbox_processed", "count": 50}
+{"event": "outbox_processed", "count": 50}
+{"event": "outbox_processed", "count": 50}
+{"event": "outbox_processed", "count": 50}
+Backup created and SQLite integrity check passed
+{
+  "synthetic_entries_requested": 200,
+  "concurrency": 8,
+  "created": 200,
+  "elapsed_seconds": 1.233,
+  "requests_per_second": 162.15,
+  "p50_ms": 35.56,
+  "p95_ms": 120.07,
+  "p99_ms": 173.72
+}
+PASS: 200 synthetic entries, 200 receipts, clean reconciliation, SQLite backup restored

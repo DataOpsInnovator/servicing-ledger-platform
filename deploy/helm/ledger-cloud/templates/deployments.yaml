@@ -1,0 +1,82 @@
+{{- range $role := list "api" "publisher" "consumer" }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger-{{ $role }}
+  labels:
+    app: ledger-{{ $role }}
+spec:
+  {{- if or (ne $role "api") (not $.Values.api.autoscaling.enabled) }}
+  replicas: {{ if eq $role "api" }}{{ $.Values.api.replicas }}{{ else }}{{ index $.Values.workers $role }}{{ end }}
+  {{- end }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: ledger-{{ $role }}
+  template:
+    metadata:
+      labels:
+        app: ledger-{{ $role }}
+    spec:
+      serviceAccountName: ledger-{{ $role }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        {{- include "ledger.podSecurity" $ | nindent 8 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: ledger-{{ $role }}
+      containers:
+        - name: {{ $role }}
+          image: {{ include "ledger.image" $ | quote }}
+          imagePullPolicy: IfNotPresent
+          {{- if eq $role "api" }}
+          command: ["python", "-m", "app.servicing_api"]
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 3
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          {{- else }}
+          command: ["python", "-m", "app.queue_worker", {{ $role | quote }}]
+          {{- end }}
+          env:
+            {{- include "ledger.env" (dict "root" $ "role" $role) | nindent 12 }}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          securityContext:
+            {{- include "ledger.containerSecurity" $ | nindent 12 }}
+          volumeMounts:
+            {{- include "ledger.mounts" $ | nindent 12 }}
+      volumes:
+        {{- include "ledger.volumes" $ | nindent 8 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ledger-{{ $role }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: ledger-{{ $role }}
+{{- end }}

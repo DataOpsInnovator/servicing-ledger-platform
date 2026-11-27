@@ -1,0 +1,7 @@
+region          = "us-east-1"
+name            = "servicing-ledger"
+environment     = "staging"
+cluster_version = "REPLACE_WITH_SUPPORTED_MINOR"
+admin_role_arn  = "arn:aws:iam::123456789012:role/YourApprovedAdminRole"
+alert_email     = "replace@example.com"
+# public_api_cidrs = ["203.0.113.10/32"] # use only if required, never unrestricted

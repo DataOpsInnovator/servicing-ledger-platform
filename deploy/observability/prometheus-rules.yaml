@@ -1,0 +1,39 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: servicing-ledger
+  namespace: monitoring
+spec:
+  groups:
+    - name: ledger.rules
+      rules:
+        - alert: LedgerOutboxLag
+          expr: max(ledger_oldest_pending_seconds) > 120
+          for: 5m
+          labels: {severity: warning}
+          annotations: {summary: 'Oldest unprocessed entry exceeds two minutes'}
+        - alert: LedgerIntegrityError
+          expr: max(ledger_reconciliation_items{kind=~"entry_integrity_errors|missing_receipts|unexpected_receipts|quarantined"}) > 0
+          for: 1m
+          labels: {severity: critical}
+          annotations: {summary: 'Ledger reconciliation discrepancy or quarantined event'}
+        - alert: LedgerArchiveLag
+          expr: max(ledger_reconciliation_items{kind="unarchived_audit_events"}) > 0
+          for: 15m
+          labels: {severity: warning}
+          annotations: {summary: 'Audit archive backlog has persisted for 15 minutes; inspect archive job'}
+        - alert: LedgerReconciliationUnavailable
+          expr: min(ledger_reconciliation_scrape_ok) == 0 or absent(ledger_reconciliation_scrape_ok)
+          for: 3m
+          labels: {severity: critical}
+          annotations: {summary: 'Reconciliation metrics unavailable'}
+        - alert: LedgerHighErrorRate
+          expr: sum(rate(ledger_http_requests_total{status=~"5..",route!~"/healthz|/readyz|/metrics"}[5m])) / clamp_min(sum(rate(ledger_http_requests_total{route!~"/healthz|/readyz|/metrics"}[5m])), 0.001) > 0.01
+          for: 5m
+          labels: {severity: warning}
+          annotations: {summary: 'More than 1 percent of business API requests fail'}
+        - alert: LedgerHighLatency
+          expr: histogram_quantile(0.95, sum by (le) (rate(ledger_http_request_duration_seconds_bucket{route!~"/healthz|/readyz|/metrics"}[5m]))) > 0.5
+          for: 5m
+          labels: {severity: warning}
+          annotations: {summary: 'Business API p95 latency above 500 ms'}

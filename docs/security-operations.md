@@ -1,5 +1,10 @@
 # Security, controls, SRE, recovery, and cost
 
+> **Historical v1.0 reference.** Preserved for design and portfolio context. For current implementation, see [v2 architecture](architecture-v2.md) and the root README. Statements about unimplemented PostgreSQL/SQS/reversals or old test counts describe v1 only.
+
+
+> Reference design / original planning material. For current implemented behavior and verified evidence, see the root README and `docs/evidence/README.md`. Cloud deployment, compliance, performance and availability remain unverified.
+
 ## Financial data and transaction integrity
 
 The simulator accepts only synthetic `SYN-` loan references and integer cents in USD. It does not calculate balances, authorize disbursements, or call a payment rail. In an enterprise implementation, the system of record would own the actual servicing state and correction policy.

@@ -1,0 +1,17 @@
+INFO:     Started server process [636]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:52847 (Press CTRL+C to quit)
+{"event": "http_request", "request_id": "23f96d32c6274896a68663382c31e35f", "route": "/readyz", "method": "GET", "status": 200, "duration_ms": 8.0}
+{"event": "http_request", "request_id": "b62eaa42480f46c3a943474940471121", "route": "/v1/servicing-entries", "method": "POST", "status": 201, "duration_ms": 8.29}
+{"event": "http_request", "request_id": "acb5790398e34a3894da855b5f85763a", "route": "/v1/servicing-entries", "method": "POST", "status": 200, "duration_ms": 3.09}
+{"event": "http_request", "request_id": "7f3cf2fc581c4ce0a8d770a7b8222df1", "route": "/v1/servicing-entries", "method": "POST", "status": 409, "duration_ms": 7.67}
+{"event": "http_request", "request_id": "859e2b241f6c42a5947701a13b338aec", "route": "/v1/servicing-entries/{entry_id}", "method": "GET", "status": 401, "duration_ms": 1.32}
+{"event": "outbox_processed", "count": 1}
+{"event": "http_request", "request_id": "168f1255bb964c5b92806373458d91ed", "route": "/v1/operations/reconciliation", "method": "GET", "status": 200, "duration_ms": 3.15}
+Backup created and SQLite integrity check passed
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [636]
+PASS: live HTTP create/replay/conflict/auth, worker, reconciliation and backup

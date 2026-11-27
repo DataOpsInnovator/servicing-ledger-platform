@@ -1,140 +1,117 @@
 # Servicing Ledger Platform
 
-An independent portfolio project for recording synthetic loan-servicing entries with idempotent request handling, an auditable state change, and recoverable asynchronous event processing.
+**v2.0.0 | Synthetic financial-services reference implementation | Local acceptance verified; AWS staging validation pending**
 
-> **Portfolio disclaimer:** This is a personal reference implementation. It is not a deployed financial-institution platform, does not connect to a bank or lender, and does not move money. All identifiers and amounts must be synthetic. It does not establish PCI DSS, SOC 2, SOX, or other compliance.
+A business-oriented servicing journal for internal financial operations. It records synthetic servicing entries exactly once per stable idempotency key, maintains append-only audit history, handles downstream event retries, supports compensating reversals, and exposes reconciliation controls. It does not transfer funds, calculate loan balances or act as a general ledger. Never use customer data or real financial transactions in this reference implementation.
 
-## Project status
+## What is delivered
 
-| Capability | Status |
-|---|---|
-| Local synthetic entry API with idempotency and SQLite transaction boundary | Implemented in this repository; execution and performance results have not been recorded |
-| Local outbox worker with consumer receipt deduplication | Implemented in this repository; execution results have not been recorded |
-| Disposable single-replica Helm demonstration | Starter chart; not suitable for durable or production use |
-| AWS EKS, RDS PostgreSQL, SQS, Terraform landing zone, GitOps, and multi-region recovery | Reference design and implementation roadmap; not deployed |
-| SLOs, recovery objectives, costs, and acceptance criteria | Proposed targets or plans; not measured results |
+| Capability | Implementation | Verification status |
+|---|---|---|
+| API, integer USD cents, concurrent idempotency, atomic audit/outbox | FastAPI + SQLite/PostgreSQL adapter | SQLite verified; PostgreSQL CI pending |
+| Full compensating reversal, immutable originals, per-loan net journal amount | Role-gated API + DB constraint and unique index | Local verified |
+| Identity | Local role tokens; RS256 OIDC access token issuer/audience/scope validation | Signed test tokens verified; real identity provider pending |
+| Event processing | Local worker or SQS publisher and idempotent consumer; DLQ and audited requeue | Simulated SDK failure/replay verified; AWS pending |
+| Audit archive | S3 conditional writes and Object Lock COMPLIANCE infrastructure | Mock SDK verified; live retention pending |
+| Infrastructure | Terraform for two-AZ VPC, EKS, RDS, ECR, SQS, IAM, Secrets Manager, CloudWatch and state | Source present; validate/plan/apply pending |
+| Delivery | CI, dependency and image scan gates, signed ECR release, SBOM, reviewed Argo CD digest promotion | Workflows present; remote run pending |
+| Operations | Prometheus metrics/rules, Grafana dashboard, optional OTLP spans, recovery/incident guides | Local metrics and restore verified; hosted monitoring pending |
 
-## Business problem
+See [current architecture](docs/architecture-v2.md), [business requirements](docs/business-requirements.md), [cloud deployment](docs/cloud-deployment.md), [operational runbook](docs/operations-v2.md), and [validation evidence](docs/evidence/README.md). Earlier architecture and portfolio documents are historical design references, not v2 deployment instructions.
 
-Loan-servicing platforms must accept repeated requests safely, preserve a trustworthy transaction history, and recover delayed work without creating duplicate business effects. This project demonstrates those controls through a **synthetic servicing-entry workflow**. It deliberately stops before settlement, payment initiation, customer communications, or integration with a real servicing system.
-
-The candidate profile in the source brief supports the domain choice: prior work described there includes mortgage-origination and loan-servicing infrastructure, managed-database modernization, recovery workflows, and auditable delivery. This portfolio architecture is proposed work and must not be described as professional production experience.
-
-## What the local implementation does
-
-1. Accepts a synthetic servicing entry over HTTP.
-2. Requires an `Idempotency-Key`; a retry with the same key and same request returns the original entry, while reuse with a different payload returns `409`.
-3. Writes the entry, an append-only application audit row, and an outbox event in one SQLite transaction.
-4. Lets a local worker consume pending outbox rows and insert a unique consumer receipt, so replay does not create a second receipt.
-5. Provides health and readiness endpoints.
-
-The local worker shares one SQLite database and commits its receipt and local handled marker together. That is a deliberately small simulator. The AWS reference design separates the database, SQS, and consumer; the SQS delivery path is at least once, so the consumer still needs its own durable deduplication boundary. This project does **not** claim distributed exactly-once processing.
-
-## Quick start
-
-Requires Python 3.12 or newer. The application uses only the Python standard library.
-
-```powershell
-$env:SERVICING_DB_PATH = "$PWD\work\servicing.db"
-python .\app\servicing_api.py
-```
-
-In a second terminal, run the local outbox worker:
-
-```powershell
-$env:SERVICING_DB_PATH = "$PWD\work\servicing.db"
-python .\app\outbox_worker.py --once
-```
-
-Submit a synthetic entry:
-
-```powershell
-$body = @{
-  loan_ref = 'SYN-LOAN-0001'
-  amount_cents = 12500
-  currency = 'USD'
-  effective_date = '2026-11-02'
-} | ConvertTo-Json
-
-Invoke-RestMethod -Method Post `
-  -Uri http://localhost:8080/v1/servicing-entries `
-  -Headers @{ 'Idempotency-Key' = 'demo-entry-000001' } `
-  -ContentType 'application/json' `
-  -Body $body
-```
-
-Repeat the request with the same key to see the original entry returned. Change the amount while reusing the key to receive `409 IDEMPOTENCY_CONFLICT`. The demo database contains synthetic data only; delete it when finished.
-
-## Architecture at a glance
+## Architecture
 
 ```mermaid
 flowchart LR
-  Dev[Developer or demo client] --> API[Servicing Entry API]
-  API --> DB[(Relational transaction store)]
-  API --> O[(Transactional outbox)]
-  O --> Pub[Outbox publisher]
-  Pub --> Q[SQS Standard queue]
-  Q --> Consumer[Idempotent consumer]
-  Consumer --> DB
-  DB --> Audit[Audit and reconciliation evidence]
+  Client[Internal servicing client] -->|HTTPS / scoped OIDC| API[FastAPI replicas]
+  API -->|Atomic insert| DB[(RDS PostgreSQL Multi-AZ)]
+  DB --> PUB[Outbox publisher]
+  PUB --> Q[SQS standard queue]
+  Q --> CON[Consumer replicas]
+  Q -. poison messages .-> DLQ[Dead-letter queue]
+  CON -->|Receipt + audit + handled marker| DB
+  DB --> ARC[Audit archive job]
+  ARC --> WORM[S3 Object Lock archive]
+  API --> MET[Prometheus / Grafana]
+  Q --> CW[CloudWatch / SNS]
 ```
 
-The diagram shows the AWS reference target. In the local implementation, API, outbox, and consumer receipt tables are in one SQLite file, and the worker simulates publication and handling. The detailed boundary is documented in [architecture](docs/architecture.md).
+Local mode uses a shared SQLite file and in-process database-backed worker, with no AWS account required. PostgreSQL Compose mode replaces SQLite with PostgreSQL but still uses the local worker. Cloud mode uses distinct database/IAM principals for API, publisher, consumer, archive and migrations.
 
-## Key design choices
+## Quick start (local, no AWS charges)
 
-- **Relational source of truth:** entry state, idempotency key, audit row, and outbox record need an atomic transaction. PostgreSQL is the proposed AWS reference database; SQLite is only the local simulator.
-- **At-least-once event path:** use an outbox and a durable consumer receipt key. Retries and duplicates are expected and handled explicitly.
-- **One region for the portfolio MVP:** multi-AZ application and database resilience first; a second AWS region is a documented warm-standby extension, not a continuously running personal deployment.
-- **EKS as a platform demonstration:** EKS is retained for fit with the candidate's background and to demonstrate Kubernetes platform patterns. A simpler ECS design would be preferable if the goal were only to host this one small API.
-- **Synthetic-only scope:** no bank-account data, credentials, card data, external payment rails, or real customer information.
-- **Cost guardrails before cloud resources:** run locally by default. The AWS roadmap requires a budget, tagging, a short-lived deployment window, teardown, and post-teardown inventory review.
+Requires Python 3.12 or 3.13; install dependencies in an isolated virtual environment. Dependencies are version-pinned, but fresh install and CVE scans must pass CI before release.
 
-## Repository map
+```bash
+python -m venv .venv
+# Windows PowerShell: .\.venv\Scripts\Activate.ps1
+# macOS/Linux: source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+python -m unittest discover -s tests -v
+python scripts/smoke.py
+python -m scripts.local_acceptance
+```
+
+The default test run skips four tests requiring disposable PostgreSQL. The acceptance script creates its own temporary DB, tokens and API subprocess, sends 200 concurrent synthetic writes, drains the outbox and verifies a restored SQLite backup.
+
+For a persistent interactive local session, generate two different URL-safe tokens of at least 32 characters:
+
+```powershell
+$env:SERVICING_WRITER_TOKEN = python -c "import secrets; print(secrets.token_urlsafe(32))"
+$env:SERVICING_OPERATOR_TOKEN = python -c "import secrets; print(secrets.token_urlsafe(32))"
+python -m app.servicing_api
+```
+
+Bash equivalent: `export SERVICING_WRITER_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"` and repeat for `SERVICING_OPERATOR_TOKEN`. Open http://127.0.0.1:8080/docs; in another terminal in the same working directory run `python -m app.outbox_worker`.
+
+## API examples
+
+Authorize with `Bearer <writer-token>` in Swagger UI. Generate a unique `Idempotency-Key` for each intended operation (8–128 ASCII letters, digits or `. _ : -`). Example body for `POST /v1/servicing-entries`:
+
+```json
+{"loan_ref":"SYN-DEMO-0001","amount_cents":12500,"currency":"USD","effective_date":"2026-01-01"}
+```
+
+Expected: `201`, replay with same key/body returns `200` and same ID; changed body with same key returns `409`. Save the returned `entry_id`. Switch to the operator token for `POST /v1/servicing-entries/{entry_id}/reversal` using a new idempotency key:
+
+```json
+{"reversal_reason":"DUPLICATE","effective_date":"2026-01-01"}
+```
+
+The original remains unchanged. `GET /v1/loans/SYN-DEMO-0001/reconciliation` returns 12,500 recorded cents, 12,500 reversed cents, net zero. For corrections, reverse the erroneous entry and create the correct entry with a new key. These are distinct operations; do not assume atomic correction across two HTTP requests.
+
+| Endpoint | Access |
+|---|---|
+| `POST /v1/servicing-entries` | writer / `ledger:write` |
+| `GET /v1/servicing-entries/{entry_id}` | writer or operator |
+| `POST /v1/servicing-entries/{entry_id}/reversal` | operator / `ledger:operate` |
+| `GET /v1/loans/{loan_ref}/reconciliation` | operator |
+| `GET /v1/operations/reconciliation` | operator |
+| `/healthz`, `/readyz`, `/metrics` | internal only; cloud ingress excludes them |
+
+## PostgreSQL locally
+
+Install Docker and Compose. Copy `.env.example` to `.env` and set all three unique disposable credentials (use URL-safe generated password). Run `docker compose -f compose.postgres.yaml up --build`. This mode uses unencrypted loopback/container-network database traffic **only for local synthetic data** and a single database owner credential. Never expose it remotely. To exercise the real integration tests against a fresh disposable DB (they create roles/schema and write data), set `TEST_POSTGRES_DSN=postgresql://ledger:YOUR_URL_SAFE_PASSWORD@127.0.0.1:5432/ledger` in your shell, stop the API/worker, and run `python -m unittest discover -s tests -p test_postgres.py -v`. Prefer a separate fresh PostgreSQL instance with no application data; integration tests assume initial test data and a role-creating admin. Do not run against RDS or a shared database.
+
+## AWS staging and GitOps
+
+Read the [deployment guide](docs/cloud-deployment.md) before running Terraform. AWS infrastructure incurs charges, and the audit bucket enforces non-removable retention. The supplied Terraform is a deployable-intent starting point requiring provider validation, a reviewed plan and staging acceptance. No cloud resources have been created by the repository author.
 
 ```text
-app/                              Standard-library API and local worker
-deploy/helm/servicing-ledger/     Disposable single-replica cluster demo
-docs/architecture.md              Workflow, assumptions, diagrams, AWS target
-docs/security-operations.md       Threat model, audit, SRE, DR, cost and AI scope
-docs/roadmap-and-validation.md    Phases, planned acceptance criteria, demo steps
-docs/portfolio-and-interview.md  Honest showcase copy and interview preparation
-docs/adr/                         Architecture decisions and revisit triggers
-infra/terraform/portfolio/        Terraform implementation boundary and backend notes
-Dockerfile                        Small local container image
+app/                     API, auth, migrations, DB adapters, SQS and audit workers
+scripts/                 bootstrap, smoke, load, restore validation
+infra/terraform/state/   state-bucket bootstrap
+infra/terraform/aws/     AWS environment Terraform
+infra/terraform/portfolio/ historical v1 reference
+deploy/helm/servicing-ledger/ local chart (single instance)
+deploy/helm/ledger-cloud/     cloud chart (digest-pinned deployments, jobs, policies)
+deploy/gitops/               Argo CD project and application templates
+deploy/observability/        Prometheus, Grafana and optional collector templates
+.github/workflows/       validation and signed release
+tests/                  unit, HTTP, failure and opt-in PostgreSQL integration
+docs/                   architecture, runbooks, evidence, ADRs and historical designs
 ```
 
-## Build sequence
+## Acceptance and boundaries
 
-1. Establish the synthetic workflow and transaction invariants.
-2. Add focused application and transaction-integrity tests before claiming the criteria in the validation plan.
-3. Add a PostgreSQL adapter and migrations, then prove atomic writes and replay behavior.
-4. Add Terraform cost controls and an isolated AWS development environment.
-5. Deploy a small EKS platform, managed PostgreSQL, and SQS with short-lived demo windows.
-6. Add GitHub Actions with short-lived OIDC credentials, image scanning, signed artifacts, and a reviewed plan/apply boundary.
-7. Add Argo CD promotion, operational telemetry, backup restore, and controlled recovery exercises.
-8. Capture reproducible evidence; update status labels before publishing portfolio claims.
-
-See [roadmap and validation](docs/roadmap-and-validation.md) for phased outcomes and proposed criteria. No automated test results, cloud deployment, benchmark, or recovery exercise are claimed by this initial scaffold.
-
-## Safety and cost
-
-The AWS design is not deployed by this repository. EKS charges separately for its control plane and worker resources; the current AWS EKS pricing page lists a standard-support cluster fee of `$0.10` per cluster-hour and additional resource charges. NAT gateways, databases, load balancers, logs, IPv4 addresses, and data transfer add costs. Use the AWS Pricing Calculator for a region-specific estimate immediately before deployment. Budget notifications can arrive after usage has occurred, so they are not a hard spending cap. See [FinOps and deployment safeguards](docs/security-operations.md#finops-and-personal-account-safeguards).
-
-## Terms
-
-- **IDP:** Internal Developer Platform
-- **SLO / SLI:** Service Level Objective / Indicator
-- **RTO / RPO:** Recovery Time Objective / Recovery Point Objective
-- **DLQ:** dead-letter queue
-- **ADR:** Architecture Decision Record
-- **OIDC:** OpenID Connect, used here for short-lived workload identity federation
-
-## Source references
-
-- [Amazon SQS standard queue delivery semantics](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/standard-queues-at-least-once-delivery.html)
-- [Amazon RDS Multi-AZ DB instance deployments](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZSingleStandby.html)
-- [Amazon EKS pricing](https://aws.amazon.com/eks/pricing/)
-- [Amazon EKS cluster endpoint access](https://docs.aws.amazon.com/eks/latest/userguide/cluster-endpoint.html)
-- [AWS Budgets and cost monitoring limitations](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html)
-
+Local evidence is recorded under `docs/evidence/`. The 200-entry run is a bounded loopback experiment, not an SLA or capacity benchmark. The target SLO, recovery objectives and compliance requirements are proposed, not certified. External identity, actual SQS delivery and DLQ behavior, RDS failover/PITR, object-lock retention, Helm, Terraform, GitHub Actions, signed release, scans, and alert routing need execution and independent review. The project deliberately remains single-organization, synthetic USD journal, and does not implement double-entry accounting, segregation-of-duties approval, consumer business side effects or integration with a source servicing system.

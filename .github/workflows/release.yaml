@@ -1,0 +1,95 @@
+name: Signed image release
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ledger-release
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: disposable-ci-only
+          POSTGRES_DB: ledger
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres -d ledger" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_POSTGRES_DSN: postgresql://postgres:disposable-ci-only@localhost:5432/ledger
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install -r requirements-dev.txt pip-audit==2.9.0
+      - run: python -m unittest discover -s tests -v
+      - run: python scripts/smoke.py
+      - run: pip-audit -r requirements.txt
+      - run: helm lint deploy/helm/ledger-cloud -f deploy/helm/ledger-cloud/values.ci.yaml
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      COSIGN_REPOSITORY: ${{ vars.SIGNATURE_REPOSITORY }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t "ledger:${GITHUB_SHA}" .
+      - name: Vulnerability gate
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ledger:${{ github.sha }}
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+      - name: Generate SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ledger:${{ github.sha }}
+          format: cyclonedx
+          output: sbom.cdx.json
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_RELEASE_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: sigstore/cosign-installer@v3.10.0
+        with:
+          cosign-release: 'v2.6.5'
+      - name: Push, sign, attest and verify immutable digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${ECR_REPOSITORY:?}" "${COSIGN_REPOSITORY:?}"
+          tag="${ECR_REPOSITORY}:${GITHUB_SHA}"
+          docker tag "ledger:${GITHUB_SHA}" "$tag"
+          docker push "$tag"
+          digest=$(aws ecr describe-images --repository-name "${ECR_REPOSITORY#*/}" --image-ids imageTag="$GITHUB_SHA" --query 'imageDetails[0].imageDigest' --output text)
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          image="${ECR_REPOSITORY}@${digest}"
+          identity="https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yaml@refs/heads/main"
+          cosign sign --yes "$image"
+          cosign attest --yes --predicate sbom.cdx.json --type cyclonedx "$image"
+          cosign verify --certificate-identity "$identity" --certificate-oidc-issuer https://token.actions.githubusercontent.com "$image" > signature-verification.json
+          cosign verify-attestation --type cyclonedx --certificate-identity "$identity" --certificate-oidc-issuer https://token.actions.githubusercontent.com "$image" > attestation-verification.json
+          printf '%s\n' "$image" > released-image.txt
+          echo "### Verified release" >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$image\` — promote this digest by reviewed GitOps PR." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-evidence
+          path: |
+            sbom.cdx.json
+            signature-verification.json
+            attestation-verification.json
+            released-image.txt

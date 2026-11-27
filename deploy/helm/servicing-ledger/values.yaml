@@ -8,5 +8,9 @@ service:
 worker:
   pollSeconds: 2
 storage:
+  existingClaim: "" # Optional pre-provisioned single-writer PVC
   sizeLimit: 256Mi
 
+
+auth:
+  existingSecret: "" # Required: writer-token and operator-token keys
