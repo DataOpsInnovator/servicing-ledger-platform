@@ -85,7 +85,7 @@ jobs:
           printf '%s\n' "$image" > released-image.txt
           echo "### Verified release" >> "$GITHUB_STEP_SUMMARY"
           echo "\`$image\` — promote this digest by reviewed GitOps PR." >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-evidence
           path: |
