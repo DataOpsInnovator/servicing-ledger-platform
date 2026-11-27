@@ -14,7 +14,11 @@ variable "github_release_subject" {
 }
 resource "aws_ecr_repository" "signatures" {
   name                 = "${var.name}-signatures"
+  # Cosign v2 uses mutable attachment tags to append signatures/attestations.
+  # Scope the exception to this dedicated repository, never workload images.
+  #trivy:ignore:AWS-0031
   image_tag_mutability = "MUTABLE"
+  image_scanning_configuration { scan_on_push = true }
   encryption_configuration { encryption_type = "AES256" }
 }
 resource "aws_iam_role" "release" {
