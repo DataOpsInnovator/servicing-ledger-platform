@@ -58,7 +58,7 @@ jobs:
           image-ref: ledger:${{ github.sha }}
           format: cyclonedx
           output: sbom.cdx.json
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: ${{ vars.AWS_RELEASE_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
