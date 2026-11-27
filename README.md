@@ -1,23 +1,33 @@
 # Servicing Ledger Platform
 
-**v2.0.0 | Synthetic financial-services reference implementation | Local acceptance verified; AWS staging validation pending**
+[![Ledger verification](https://github.com/DataOpsInnovator/servicing-ledger-platform/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/DataOpsInnovator/servicing-ledger-platform/actions/workflows/ci.yaml) [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
+**v2.0.0 | CI-validated financial-services reference implementation | AWS staging validation pending**
 
 A business-oriented servicing journal for internal financial operations. It records synthetic servicing entries exactly once per stable idempotency key, maintains append-only audit history, handles downstream event retries, supports compensating reversals, and exposes reconciliation controls. It does not transfer funds, calculate loan balances or act as a general ledger. Never use customer data or real financial transactions in this reference implementation.
+
+## Business problem and approach
+
+A servicing operation must survive retries, preserve the original financial record and expose incomplete downstream work without creating duplicate entries. This project demonstrates an atomic journal/audit/outbox write, compensating reversals, scoped access and recoverable at-least-once event processing. It intentionally models one synthetic USD journal rather than a complete accounting or payment system.
 
 ## What is delivered
 
 | Capability | Implementation | Verification status |
 |---|---|---|
-| API, integer USD cents, concurrent idempotency, atomic audit/outbox | FastAPI + SQLite/PostgreSQL adapter | SQLite verified; PostgreSQL CI pending |
+| API, integer USD cents, concurrent idempotency, atomic audit/outbox | FastAPI + SQLite/PostgreSQL adapter | SQLite and PostgreSQL integration verified in CI |
 | Full compensating reversal, immutable originals, per-loan net journal amount | Role-gated API + DB constraint and unique index | Local verified |
 | Identity | Local role tokens; RS256 OIDC access token issuer/audience/scope validation | Signed test tokens verified; real identity provider pending |
 | Event processing | Local worker or SQS publisher and idempotent consumer; DLQ and audited requeue | Simulated SDK failure/replay verified; AWS pending |
 | Audit archive | S3 conditional writes and Object Lock COMPLIANCE infrastructure | Mock SDK verified; live retention pending |
-| Infrastructure | Terraform for two-AZ VPC, EKS, RDS, ECR, SQS, IAM, Secrets Manager, CloudWatch and state | Source present; validate/plan/apply pending |
-| Delivery | CI, dependency and image scan gates, signed ECR release, SBOM, reviewed Argo CD digest promotion | Workflows present; remote run pending |
+| Infrastructure | Terraform for two-AZ VPC, EKS, RDS, ECR, SQS, IAM, Secrets Manager, CloudWatch and state | Terraform init/validate and IaC scan passed; AWS plan/apply pending |
+| Delivery | CI, dependency and image scan gates, signed ECR release, SBOM, reviewed Argo CD digest promotion | CI and container scan passed; signed ECR release and live Argo promotion pending |
 | Operations | Prometheus metrics/rules, Grafana dashboard, optional OTLP spans, recovery/incident guides | Local metrics and restore verified; hosted monitoring pending |
 
 See [current architecture](docs/architecture-v2.md), [business requirements](docs/business-requirements.md), [cloud deployment](docs/cloud-deployment.md), [operational runbook](docs/operations-v2.md), and [validation evidence](docs/evidence/README.md). Earlier architecture and portfolio documents are historical design references, not v2 deployment instructions.
+
+## Verified engineering evidence
+
+The enterprise modernization was merged in [PR #1](https://github.com/DataOpsInnovator/servicing-ledger-platform/pull/1). All five jobs passed in the [pre-merge run](https://github.com/DataOpsInnovator/servicing-ledger-platform/actions/runs/45938572156) and [post-merge run](https://github.com/DataOpsInnovator/servicing-ledger-platform/actions/runs/45938785505) on commit `ec5c72d`. These runs verify Python 3.12/3.13 application tests and acceptance, four PostgreSQL integration tests, dump/restore fingerprints, dependency audit, Bandit, Terraform validation and configuration scanning, Helm lint/render, Docker build/image scanning and Compose configuration. Scan results are point-in-time and apply to the configured thresholds and exceptions. See [evidence register](docs/evidence/README.md) for boundaries.
 
 ## Architecture
 
@@ -95,7 +105,7 @@ Install Docker and Compose. Copy `.env.example` to `.env` and set all three uniq
 
 ## AWS staging and GitOps
 
-Read the [deployment guide](docs/cloud-deployment.md) before running Terraform. AWS infrastructure incurs charges, and the audit bucket enforces non-removable retention. The supplied Terraform is a deployable-intent starting point requiring provider validation, a reviewed plan and staging acceptance. No cloud resources have been created by the repository author.
+Read the [deployment guide](docs/cloud-deployment.md) before running Terraform. AWS infrastructure incurs charges, and the audit bucket enforces non-removable retention. The supplied Terraform passed provider validation in CI; a reviewed AWS plan, actual deployment and staging acceptance remain required. No cloud resources have been created by the repository author.
 
 ```text
 app/                     API, auth, migrations, DB adapters, SQS and audit workers
@@ -114,4 +124,8 @@ docs/                   architecture, runbooks, evidence, ADRs and historical de
 
 ## Acceptance and boundaries
 
-Local evidence is recorded under `docs/evidence/`. The 200-entry run is a bounded loopback experiment, not an SLA or capacity benchmark. The target SLO, recovery objectives and compliance requirements are proposed, not certified. External identity, actual SQS delivery and DLQ behavior, RDS failover/PITR, object-lock retention, Helm, Terraform, GitHub Actions, signed release, scans, and alert routing need execution and independent review. The project deliberately remains single-organization, synthetic USD journal, and does not implement double-entry accounting, segregation-of-duties approval, consumer business side effects or integration with a source servicing system.
+Local evidence is recorded under `docs/evidence/`. The 200-entry run is a bounded loopback experiment, not an SLA or capacity benchmark. The target SLO, recovery objectives and compliance requirements are proposed, not certified. External identity, actual SQS delivery and DLQ behavior, RDS failover/PITR, object-lock retention, live Helm/EKS installation, Terraform plan/apply, signed release, and alert routing need execution and independent review. The CI validation and security scans described above have passed; they do not establish production compliance. The project deliberately remains single-organization, synthetic USD journal, and does not implement double-entry accounting, segregation-of-duties approval, consumer business side effects or integration with a source servicing system.
+
+## Governance and license
+
+See [contribution guidelines](CONTRIBUTING.md), [security policy](SECURITY.md), [release governance](docs/repository-governance.md) and [changelog](CHANGELOG.md). Repository-owned source is licensed under [Apache License 2.0](LICENSE); third-party dependencies retain their respective licenses.

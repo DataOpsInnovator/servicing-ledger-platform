@@ -1,6 +1,6 @@
 # Security policy
 
-Synthetic reference only. Do not enter real customer records, account numbers or payments. Report security issues privately to the repository maintainer (configure GitHub private vulnerability reporting before publishing); do not post secrets or exploitable details publicly. Supported release: v2.0.0 source, pending independent validation.
+Synthetic reference only. Do not enter real customer records, account numbers or payments. Report security issues privately to the repository maintainer (configure GitHub private vulnerability reporting before publishing); do not post secrets or exploitable details publicly. Current supported source line: v2.0.0. CI-validated reference implementation; independent production assessment remains pending.
 
 ## Controls
 
@@ -8,4 +8,4 @@ Role-scoped API and RS256 OIDC, trusted issuer/audience/JWKS, bounded input, str
 
 ## Remaining approval gates
 
-Run real PostgreSQL/role tests and cloud acceptance, resolve dependency/container/IaC findings, pin actions and image inputs, validate trust/issuer/scopes, workload identity/DB grants, secret rotation, CNI egress and TLS end-to-end, admission-time signature enforcement, backup/failover/PITR, cloud log retention, external reconciliation and maker-checker approval. No regulatory compliance certification. See `docs/cloud-deployment.md` and `docs/operations-v2.md`.
+The PostgreSQL integration and restore rehearsal, dependency audit, Bandit, container and IaC scans passed in [main CI](https://github.com/DataOpsInnovator/servicing-ledger-platform/actions/runs/45938785505). Re-run these gates for every change; historical results do not imply ongoing absence of vulnerabilities. Before production, run cloud acceptance, review the documented Cosign attachment-tag exception, pin actions and image inputs, validate trust/issuer/scopes, workload identity/DB grants, secret rotation, CNI egress and TLS end-to-end, admission-time signature enforcement, backup/failover/PITR, cloud log retention, external reconciliation and maker-checker approval. No regulatory compliance certification. See `docs/cloud-deployment.md` and `docs/operations-v2.md`.

@@ -9,7 +9,10 @@
 - Added AWS Terraform environment and remote-state bootstrap; digest-pinned Helm workloads, migration/archive jobs, network policies, PDB, optional HPA/ServiceMonitor and Argo templates.
 - Added CI with PostgreSQL, backup restore, Terraform/Helm checks, scans; signed ECR release and SBOM; Prometheus rules, Grafana dashboard and optional OTLP request traces.
 - Added repeatable local load and recovery acceptance, staging smoke, cloud deployment and recovery runbooks. Preserved v1 design as historical reference.
-- Verified 34 local tests, 200-entry loopback acceptance and restore. Four PostgreSQL tests skipped; cloud, deployment, remote CI and scans not executed.
+- Initial offline validation: 34 local tests passed, four PostgreSQL tests skipped, and 200-entry loopback acceptance/restore passed.
+- Follow-up CI remediation aligned PostgreSQL 16 backup tools, upgraded dependencies, hardened KMS encryption and the non-root Alpine multi-stage image, and replaced dynamic SQL construction with static parameterized queries.
+- All five jobs passed in [pre-merge CI](https://github.com/DataOpsInnovator/servicing-ledger-platform/actions/runs/45938572156) and [main CI](https://github.com/DataOpsInnovator/servicing-ledger-platform/actions/runs/45938785505); all four PostgreSQL integration tests and the five-table restore fingerprint check passed. Terraform/Helm validation and configured security scans passed. Live AWS deployment and signed artifact publication remain pending.
+- Added Apache-2.0 licensing and updated publication documentation.
 
 ## 1.0.0 — Local reference modernization
 
