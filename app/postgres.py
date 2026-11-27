@@ -68,6 +68,10 @@ class PostgresStore(LedgerStore):
                 return False
             if not full:
                 return True
-            for table in ('servicing_entries', 'audit_events', 'outbox', 'consumer_receipts', 'audit_archive_receipts'):
-                conn.execute(f'SELECT 1 FROM {table} LIMIT 1')
+            for query in ('SELECT 1 FROM servicing_entries LIMIT 1',
+                          'SELECT 1 FROM audit_events LIMIT 1',
+                          'SELECT 1 FROM outbox LIMIT 1',
+                          'SELECT 1 FROM consumer_receipts LIMIT 1',
+                          'SELECT 1 FROM audit_archive_receipts LIMIT 1'):
+                conn.execute(query)
             return True
