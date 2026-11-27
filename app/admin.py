@@ -38,7 +38,9 @@ def main():
         if not re.fullmatch(r'evt_[a-f0-9]{32}', args.event_id) or not re.fullmatch(r'[A-Za-z0-9-]{6,64}', args.incident):
             parser.error('Invalid event or incident identifier')
         with store.transaction() as conn:
-            row = conn.execute('SELECT * FROM outbox WHERE event_id=?' + (' FOR UPDATE' if store.distributed else ''), (args.event_id,)).fetchone()
+            query = ('SELECT * FROM outbox WHERE event_id=? FOR UPDATE' if store.distributed
+                     else 'SELECT * FROM outbox WHERE event_id=?')
+            row = conn.execute(query, (args.event_id,)).fetchone()
             if not row or row['handled_at'] or row['quarantined_at'] or not row['published_at']:
                 parser.error('Only published, unhandled, nonquarantined events may be requeued')
             conn.execute('UPDATE outbox SET published_at=NULL WHERE event_id=?', (args.event_id,))
